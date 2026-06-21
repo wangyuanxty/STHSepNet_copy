@@ -1,0 +1,33 @@
+# Model checkpoints and weights
+checkpoints/
+result/
+results/
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+
+# HuggingFace downloaded models
+huggingface/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Dataset (re-download from source)
+dataset/
+# Keep prompt_bank and adjacency CSVs
+!dataset/prompt_bank/
+!dataset/*/adj.csv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
