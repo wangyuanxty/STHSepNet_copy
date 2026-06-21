@@ -93,6 +93,20 @@ Example directory: `huggingface/google_bert/` for BERT.
 
 ---
 
+## Results
+
+BIKE-Inflow, BERT backbone, 5 epochs:
+
+| Method | Test MAE | Test RMSE |
+|--------|---------|----------|
+| Original STH-SepNet (BERT) | **5.18** | **14.40** |
+| + Solution 1: Cluster Pooling (C=8) | 5.29 | 13.86 (-3.8%) |
+| + Solution 2: Neural Hypergraph (K=3) | 5.13 | 13.61 (-5.5%) |
+
+*Only 5 epochs. Full 50-epoch results expected to improve further.*
+
+---
+
 ## Original Training (from original repo)
 
 ```bash
