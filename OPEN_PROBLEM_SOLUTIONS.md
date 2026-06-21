@@ -18,9 +18,9 @@ x_enc_pool = x_enc.mean(2, keepdim=True)   # (B, T, 358) → (B, T, 1)
 
 358 个传感器的速度被取了一个全局均值。路口 A 从 60 骤降到 8，357 个普通路口波动不大——这两个信号在均值里互相抵消，LLM 看到的就是一条基本没变化的曲线。之后 LLM 输出一条全局预测，被 `.expand` 复制 358 份分给所有传感器。对事故点来说太乐观，对绕行点来说方向都是反的。
 
-有人会问，那在 LLM 输出和 STHGNN 输出之间加个 cross-attention 让两边交互一下不就行了。论文自己试过了——Figure C.1 的 `attentiongate` 和 `lstmgate` 就是这个思路。结果 `attentiongate` 的全局注意力引入了冗余交互，稀疏数据下对噪声敏感；`lstmgate` 有时序能力但抓不住空间特征的动态变化。两种在所有数据集上都不如最简单的 `adaptive` gate（一个线性层+sigmoid）。这说明 fusion 阶段做交互是错的——两个模态已经各自编码完了，硬做 cross-attention 只会引入噪声。
+一种直觉的想法是在 LLM 和 STHGNN 的输出之间加 cross-attention 来捕捉时空交互。但论文 Figure C.1 的消融实验已经否定了这条路——`attentiongate` 和 `lstmgate` 就是这个思路。结果 `attentiongate` 的全局注意力引入了冗余交互，稀疏数据下对噪声敏感；`lstmgate` 有时序能力但抓不住空间特征的动态变化。两种在所有数据集上都不如最简单的 `adaptive` gate（一个线性层+sigmoid）。这说明 fusion 阶段做交互是错的——两个模态已经各自编码完了，硬做 cross-attention 只会引入噪声。
 
-所以问题不是"LLM 和 STHGNN 缺交互"，而是 LLM 从一开始看到的输入就是坏的。均值池化把空间差异性丢了，应该在输入端修，不是在输出端缝。
+所以问题可能不在 LLM 和 STHGNN 之间缺交互，而在于 LLM 的输入在池化时丢失了空间差异。均值操作抹平了不同位置的时序特征，修复输入端比在输出端做跨模态交互更直接。
 
 ---
 

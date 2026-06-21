@@ -28,6 +28,9 @@ dataset/
 *.swp
 *.swo
 
+# Personal notes
+STH-SepNet-Notes.md
+
 # OS
 .DS_Store
 Thumbs.db
