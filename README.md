@@ -89,7 +89,9 @@ KNN 超图构建的核心操作是"根据两个节点的特征向量判断它们
 
 ### 方法
 
-节点特征沿用原论文编码方式：$\mathbf{h} = \tanh(\alpha \cdot \text{Linear}(\text{Emb}(\text{idx})))$。对每对节点 $(i,j)$ 计算连接分数：
+节点特征沿用原论文编码方式：
+$$\mathbf{h} = \tanh(\alpha \cdot \text{Linear}(\text{Emb}(\text{idx})))$$。
+对每对节点 $(i,j)$ 计算连接分数：
 
 $$s_{ij} = \text{MLP}\big([\mathbf{h}_i \| \mathbf{h}_j]\big)$$
 
