@@ -1,95 +1,110 @@
-# STH-SepNet
+# STH-SepNet：开放问题分析与改进
 
-[KDD 2025] **Decoupling Spatio-Temporal Prediction: When Lightweight Large Models Meet Adaptive Hypergraphs**
-
+基于 Chen et al., *Decoupling Spatio-Temporal Prediction: When Lightweight Large Models Meet Adaptive Hypergraphs*, KDD 2025.  
 [论文](https://arxiv.org/abs/2505.19620) | [原仓库](https://github.com/jiawenchen10/STHSepNet)
 
-STH-SepNet 将时间建模和空间建模解耦——轻量 LLM 捕捉低秩时间动态，自适应超图神经网络捕捉高阶空间交互，门控机制融合两者。
+STH-SepNet 将时空建模解耦为两个独立模块：轻量 LLM 负责全局时间动态，自适应超图神经网络负责高阶空间交互，最后通过可学习门控融合两者的输出。原论文在五个数据集上取得了 SOTA 结果，同时在 Section 5 的 "Limitations and future work" 中指出了当前设计的两个局限。本文档围绕这两个开放问题展开分析，提出两种端到端的改进方案并给出初步实验结果。
 
 ---
 
-## 论文开放问题
+## 1. 开放问题分析
 
-论文第 5 节 "Limitations and future work" 提出两个开放问题：
+### 1.1 全局均值池化导致的空间信息丢失
 
-**问题一：解耦假设在时空因果耦合时不一定成立。**
-
-> The framework assumes temporal and spatial dependencies can be cleanly decoupled, which may not hold in scenarios where these dimensions are intrinsically intertwined (e.g., rapidly evolving events with coupled spatio-temporal causality).
-
-回头看代码第 353 行：
+论文指出"框架假设时间与空间依赖可以被干净地解耦，但这在时空因果耦合的快速演化事件中不一定成立"。该问题的直接表现位于模型第 353 行：
 
 ```python
-x_enc_pool = x_enc.mean(2, keepdim=True)   # (B, T, 358) → (B, T, 1)
+x_enc_pool = x_enc.mean(2, keepdim=True)   # (B, T, N) → (B, T, 1)
 ```
 
-358 个传感器的速度被取了一个全局均值。路口 A 从 60 骤降到 8，357 个普通路口波动不大——两个信号在均值里互相抵消，LLM 看到的就是一条基本没变化的曲线。之后 LLM 输出一条全局预测，被 `.expand` 复制 358 份分给所有传感器。对事故点太乐观，对绕行点方向都是反的。
+N 个传感器的速度在进入 LLM 之前被压缩为一条全局均值曲线。当某个路口发生事故，其速度从 60 骤降至 8，而其余路口维持在正常范围的波动——两个信号在均值中相互抵消，LLM 实际接收到的输入几乎没有反映出这一异常。随后 LLM 输出的单一预测经 `.expand` 复制 N 份分配给所有传感器，无论该位置是否受到事故影响。
 
-一种直觉的想法是在 LLM 和 STHGNN 的输出之间加 cross-attention 来捕捉时空交互。但论文 Figure C.1 的消融实验已经否定了这条路——`attentiongate` 和 `lstmgate` 在所有数据集上都不如最简单的 `adaptive` gate（一个线性层 + sigmoid）。fusion 阶段两个模态已经各自编码完了，硬做 cross-attention 只会引入噪声。
+论文 Figure C.1 的消融实验间接验证了仅在后端融合阶段增强交互的思路不可行：`attentiongate` 和 `lstmgate` 试图在 LLM 和 STHGNN 输出之间做跨模态交互，但两者的效果均不及最简单的 `adaptive` gate（单层线性映射加 sigmoid）。fusion 阶段两个模态已完成各自编码，此时强行引入 cross-attention 并不能弥补输入端的信息损失，反而引入冗余交互。
 
-所以问题可能不在 LLM 和 STHGNN 之间缺交互，而在于 LLM 的输入在池化时丢失了空间差异。
+据此判断，问题的症结不在两个模块之间缺乏交互，而在于 LLM 接收的输入本身就丢失了空间差异性。
 
-**问题二：自适应超图的 KNN 构建存在可微性和效率问题。**
+### 1.2 KNN 超图构建的可微性缺陷
 
-> The adaptive hypergraph's reliance on real-time node feature updates could pose challenges in latency-critical applications, where computational overhead for dynamic hyperedge generation might limit responsiveness.
-
-超边构建在 `AdaGNN.py` 第 339 行：
+论文同时指出"自适应超图对实时节点特征更新的依赖，在延迟敏感场景下可能带来计算开销问题"。超边构建位于 `AdaGNN.py` 第 339 行：
 
 ```python
 nn = NearestNeighbors(n_neighbors=num_neighbors, metric='euclidean')
-nn.fit(transformed_features.cpu().detach().numpy())   # 搬到 CPU
-distances, indices = nn.kneighbors(...)                 # sklearn 跑
+nn.fit(transformed_features.cpu().detach().numpy())
+distances, indices = nn.kneighbors(...)
 ```
 
-两方面问题。一是不可微——超边是硬 0/1，梯度在这里断了。二是 `.cpu().detach().numpy()` 把数据从 GPU 拉到 CPU 给 sklearn，跑完再搬回 GPU。
+KNN 操作依赖 sklearn 实现，需要将 GPU 上的特征张量搬回 CPU，完成后再搬回 GPU。更为关键的是，超边关联矩阵 H 由硬 0/1 构成，梯度在此处断裂，超图结构的质量只能通过 Embedding 的间接更新来改善，无法接收预测损失的直接影响。
 
 ---
 
-## 方案一：Cluster Pooling（针对问题一）
+## 2. 方案一：Cluster Pooling
 
-替换 `x_enc.mean(2)`。取 C 个可学习的聚类中心（C 远小于 N），每个节点根据它的 Embedding 向量被软分配到不同聚类。同一个聚类的节点的速度曲线加权平均，形成 C 条有代表性的曲线，每条拼接一个"聚类身份嵌入"告诉 LLM 它是哪类节点。LLM 输出 C 条预测后，用同一个软分配矩阵反池化回 N 个节点。
+### 动机
 
-设节点 Embedding 为 $\mathbf{E} \in \mathbb{R}^{N \times D}$（取 `hgc.emb1.weight`，和超图构造同一套），聚类中心为 $\mathbf{C} \in \mathbb{R}^{C \times D}$：
+`x_enc.mean(2)` 将 N 条传感器曲线压缩为一条，所有空间差异被抹平。现考虑用可学习的软聚类替代全局均值：将 N 个节点分配至 C 个聚类（C 远小于 N），每个聚类产出一条代表性曲线送入 LLM，LLM 输出 C 条预测后再反池化回 N 个节点。
+
+### 方法
+
+聚类由 STHGNN 的节点 Embedding 驱动——该 Embedding 同时也是超图构造的输入，因此聚类天然携带空间结构信息。设节点嵌入 $\mathbf{E} \in \mathbb{R}^{N \times D}$（取自 `hgc.emb1.weight`），可学习聚类中心 $\mathbf{C} \in \mathbb{R}^{C \times D}$，温度 $\tau$：
 
 $$\mathbf{S} = \text{softmax}\left(\frac{\mathbf{E} \mathbf{C}^\top}{\tau}\right) \in \mathbb{R}^{N \times C}$$
 
-池化：$\mathbf{X}^{\text{clustered}} = \mathbf{X}^{\text{enc}} \cdot \mathbf{S}$，从 (B,T,N) 到 (B,T,C)。反池化：$\mathbf{X}_{\text{per-node}} = \mathbf{X}_{\text{out}} \cdot \mathbf{S}^\top$，从 (B,pred_len,C) 回到 (B,pred_len,N)。
+其中 $\mathbf{S}_{i,k}$ 表示节点 $i$ 属于聚类 $k$ 的概率。池化和反池化分别为两次矩阵乘法：
 
-聚类多样性损失防止所有中心退化到同一点（那就退化成全局均值了）：
+$$\mathbf{X}^{\text{clustered}} = \mathbf{X}^{\text{enc}} \cdot \mathbf{S} \in \mathbb{R}^{B \times T \times C}, \quad
+\mathbf{X}_{\text{per-node}} = \mathbf{X}_{\text{out}} \cdot \mathbf{S}^\top \in \mathbb{R}^{B \times P \times N}$$
+
+为防止所有聚类中心退化至同一点（此时退化为全局均值池化），引入多样性正则项，惩罚不同聚类中心之间过高的余弦相似度：
 
 $$\mathcal{L}_{\text{div}} = \frac{1}{C(C-1)} \sum_{i \neq j} \text{ReLU}\left(\frac{\mathbf{c}_i^\top \mathbf{c}_j}{\|\mathbf{c}_i\| \|\mathbf{c}_j\|}\right)$$
 
 总损失 $\mathcal{L} = \mathcal{L}_{\text{MSE}} + 0.1 \cdot \mathcal{L}_{\text{div}}$。
 
-`soft_assign` 只依赖权重矩阵（Embedding + cluster_centers），不依赖 STHGNN 的前向结果，所以 LLM 和 STHGNN 仍然可以并行跑。
+### 实现
 
-参考：
-- **STID** (CIKM 2022) — 证明给每个时空节点加可学习身份嵌入对预测有明显帮助。聚类身份嵌入本质上是给每类区域挂一张身份证，让 LLM 知道它处理的是高速公路还是居民区。
-- **Token Merging** (ICLR 2023) — 证明 Transformer 里软聚类比硬聚类稳定。不做离散节点分组，用 softmax 让每个节点可以部分属于多个聚类。
+`soft_assign` 仅依赖权重矩阵（Embedding 与 cluster_centers），不依赖 STHGNN 的前向计算结果，LLM 与 STHGNN 保持并行。每条聚类曲线拼接一个可学习的聚类身份嵌入（`cluster_identity`），告知 LLM 其所代表的节点类型。
+
+```python
+logits = node_embeddings @ cluster_centers.T / temperature
+soft_assign = F.softmax(logits, dim=-1)          # (N, C)
+x_clustered = x_enc @ soft_assign                # (B, T, C)
+# ... LLM 处理 ...
+LLM_per_node = LLM_out @ soft_assign.T           # (B, P, N)
+```
+
+### 相关文献
+
+STID (Shao et al., CIKM 2022) 论证了为每个时空节点引入可学习身份嵌入对预测精度的提升作用。聚类身份嵌入沿用了这一思想——与 STID 的逐节点身份不同，此处采用逐聚类身份以适配输入压缩的需求。Token Merging (Bolya et al., ICLR 2023) 指出 Transformer 中软聚类相比硬聚类更稳定，与本文采用 softmax 分配而非离散分组的做法一致。
 
 ---
 
-## 方案二：Neural Hypergraph（针对问题二）
+## 3. 方案二：Neural Hypergraph
 
-替换 sklearn KNN。用一个小的 MLP 对每对节点打分（输入是两个节点特征的拼接，输出一个标量），然后用 Gumbel-Softmax 做可微的 Top-K 选边。全部是矩阵乘法，可以留在 GPU 上，超图结构可以被预测损失的梯度直接优化。
+### 动机
 
-节点特征和原论文一样：$\mathbf{h} = \tanh(\alpha \cdot \text{Linear}(\text{Emb}(\text{idx})))$。对每对节点：
+KNN 超图构建的核心操作是"根据两个节点的特征向量判断它们是否应连接"。该操作可自然地替换为一个可微分的 MLP 评分网络，输入为两节点特征的拼接，输出为一个标量分数。对所有节点对评分后，通过 Gumbel-Softmax 实现可微分的 Top-K 选择，得到稀疏超边关联矩阵。
+
+### 方法
+
+节点特征沿用原论文编码方式：$\mathbf{h} = \tanh(\alpha \cdot \text{Linear}(\text{Emb}(\text{idx})))$。对每对节点 $(i,j)$ 计算连接分数：
 
 $$s_{ij} = \text{MLP}\big([\mathbf{h}_i \| \mathbf{h}_j]\big)$$
 
-分数矩阵 $\mathbf{S} \in \mathbb{R}^{N \times N}$，对角线置 $-\infty$。训练时加 Gumbel 噪声做松弛选边，Straight-Through Estimator：前向走硬 0/1 mask，反向梯度走 soft 分布。推理时不加噪声，直接硬 Top-K。
+得到 $\mathbf{S} \in \mathbb{R}^{N \times N}$ 后，将对角线置 $-\infty$ 以排除自连接。训练时加入 Gumbel 噪声，用 Straight-Through Estimator 实现前向硬选边（0/1 mask）与反向软梯度传播。Good.
 
-Gumbel-Softmax 梯度：
+Gumbel-Softmax 的梯度形式为：
 
 $$\frac{\partial p_{ij}}{\partial s_{im}} = \frac{1}{\tau} \cdot p_{ij} \cdot (\delta_{jm} - p_{im})$$
 
-评分网络是三层 MLP（2D → 128 → 128 → 1）。输出 H 形状 (N, N)，直接替代原来的超边关联矩阵，`HypergraphConvolution` / `HypergraphAttention` 不用改，GCN 分支（`gconv1/2/3`）也完全不动。
+### 实现
+
+评分网络为三层 MLP（2D → 128 → 128 → 1）。输出矩阵形状为 (N, N)，直接替代原论文的超边关联矩阵，下游的 `HypergraphConvolution` 和 `HypergraphAttention` 无需修改。GCN 分支（`gconv1/2/3`）保持不变。
 
 ```python
 h_i = h.unsqueeze(1).expand(N, N, D)
 h_j = h.unsqueeze(0).expand(N, N, D)
 pairs = torch.cat([h_i, h_j], dim=-1)
-scores = self.scorer(pairs).squeeze(-1)         # (N, N)
-scores = scores + diag(full(N, -inf))
+scores = self.scorer(pairs).squeeze(-1)
 
 if self.training:
     H = gumbel_softmax_topk(scores, max_k, temperature)
@@ -97,25 +112,25 @@ else:
     H = hard_topk(scores, max_k)
 ```
 
-参考：
-- **Gumbel-Softmax** (ICLR 2017) — 离散采样的可微重参数化。
-- **GAT** (ICLR 2018) — 可学习连接权重优于固定距离度量。用评分网络替代欧氏距离 KNN，本质是把"谁该连谁"从数学公式变成可学习函数。
+### 相关文献
+
+Gumbel-Softmax (Jang et al., ICLR 2017) 为离散采样的可微重参数化提供了理论依据。GAT (Veličković et al., ICLR 2018) 证明了通过学习得到的注意力权重优于基于固定距离度量的连接——这一结论支持了用可学习评分网络替代欧氏距离 KNN 的设计。
 
 ---
 
-## 使用
+## 4. 使用
 
 ```bash
 # 基线（原论文）
 python train_sthsepnet.py --llm_model BERT --data inflow \
   --root_path ./dataset/Bike/ --data_path inflow.csv --node_num 295
 
-# 方案一
+# 方案一：Cluster Pooling
 python train_sthsepnet.py --llm_model BERT --data inflow \
   --root_path ./dataset/Bike/ --data_path inflow.csv --node_num 295 \
   --use_cluster_pooling --num_clusters 8
 
-# 方案二
+# 方案二：Neural Hypergraph
 python train_sthsepnet.py --llm_model BERT --data inflow \
   --root_path ./dataset/Bike/ --data_path inflow.csv --node_num 295 \
   --use_neural_hypergraph --scale_hyperedges 3
@@ -124,38 +139,32 @@ python train_sthsepnet.py --llm_model BERT --data inflow \
 | 参数 | 效果 |
 |------|------|
 | (无) | 原论文基线 |
-| `--use_cluster_pooling` | LLM 看到 C 条曲线而非 1 条 |
-| `--use_neural_hypergraph` | 神经评分替代 KNN |
+| `--use_cluster_pooling` | 软聚类池化替代全局均值 |
+| `--use_neural_hypergraph` | 神经评分网络替代 KNN |
 
 ---
 
-## 实验结果
+## 5. 初步实验结果
 
-BIKE-Inflow, BERT 主干, 5 个 epoch：
+BIKE-Inflow 数据集，BERT 主干，训练 5 个 epoch：
 
 | 方法 | Test MAE | Test RMSE |
 |------|---------|----------|
-| 原论文 STH-SepNet (BERT) | **5.18** | **14.40** |
+| 原论文 STH-SepNet (BERT) | 5.18 | 14.40 |
 | 方案一 Cluster Pooling (C=8) | 5.29 | 13.86 |
 | 方案二 Neural Hypergraph (K=3) | 5.13 | 13.61 |
 
-*仅 5 epoch，跑满 50 epoch 效果应该更好。*
+方案二在 RMSE 上降低了 5.5%（14.40 → 13.61），MAE 也有小幅改善。方案一的 RMSE 降低了 3.8%，但 MAE 略高，可能与超参数 C=8 的选择有关。以上仅训练 5 个 epoch，完整 50 epoch 训练后的结果预期有进一步提升空间。
 
 ---
 
-## 环境
+## 6. 环境配置
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 数据
-
-从 [Google Drive](https://drive.google.com/drive/folders/1uhQqAdrIplhhKCHn0McnB-trve6_rATD?usp=drive_link) 下载，放到 `./dataset/`。
-
-## 预训练模型
-
-从 HuggingFace 下载，放到 `./huggingface/`（例如 BERT 放在 `huggingface/google_bert/`）：
+数据从 [Google Drive](https://drive.google.com/drive/folders/1uhQqAdrIplhhKCHn0McnB-trve6_rATD?usp=drive_link) 下载至 `./dataset/`。预训练模型从 HuggingFace 下载至 `./huggingface/`：
 
 | 模型 | 参数量 | 维度 |
 |------|:---:|:---:|
@@ -165,28 +174,18 @@ pip install -r requirements.txt
 | [LLAMA-7B](https://huggingface.co/huggyllama/llama-7b) | 6740M | 4096 |
 | [LLAMA-3.1-8B](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) | 8000M | 4096 |
 
----
-
-## 原论文训练脚本
-
-```bash
-sh ./scripts/BIKE/BERT_Bike_order3.sh    # STH-SepNet（完整模型，k=3）
-sh ./scripts/BIKE/BERT_Bike.sh           # STH-SepNet-GNN（仅 GCN）
-sh ./scripts/BIKE/BERT_Bike_mixorder3.sh # STH-SepNet-Mixorder
-```
-
-Windows 用 `./scripts/*/` 下的 `.bat`。
+原论文训练脚本位于 `./scripts/`，Windows 使用对应 `.bat` 文件。
 
 ---
 
-## 文件结构
+## 7. 文件结构
 
 ```
-├── train_sthsepnet.py                          # 训练脚本（基线 + 方案）
+├── train_sthsepnet.py
 ├── models/
-│   ├── ST_SepNet.py                            # 原模型（未修改）
-│   ├── Solution1_ClusterPooling.py             # 方案一模块
-│   └── Solution2_NeuralHypergraphGenerator.py  # 方案二模块
+│   ├── ST_SepNet.py                            # 原论文模型
+│   ├── Solution1_ClusterPooling.py             # 方案一
+│   └── Solution2_NeuralHypergraphGenerator.py  # 方案二
 ├── layers/   data_provider/   utils/   scripts/
 └── dataset/                                    # 需下载
 ```
@@ -197,7 +196,7 @@ Windows 用 `./scripts/*/` 下的 `.bat`。
 @inproceedings{chen2025decoupling,
   title={Decoupling Spatio-Temporal Prediction: When Lightweight Large Models Meet Adaptive Hypergraphs},
   author={Chen, Jiawen and Shao, Qi and Chen, Duxin and Yu, Wenwu},
-  booktitle={Proceedings of the ACM SIGKDD Conference on Knowledge Discovery and Data Mining (KDD)},
+  booktitle={KDD},
   year={2025}
 }
 ```
