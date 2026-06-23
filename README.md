@@ -58,7 +58,7 @@ $$\mathbf{X}^{\text{clustered}} = \mathbf{X}^{\text{enc}} \cdot \mathbf{S} \in \
 
 $$\mathcal{L}_{\text{div}} = \frac{1}{C(C-1)} \sum_{i \neq j} \text{ReLU}\left(\frac{\mathbf{c}_i^\top \mathbf{c}_j}{\|\mathbf{c}_i\| \|\mathbf{c}_j\|}\right)$$
 
-总损失 $\mathcal{L} = \mathcal{L}_{\text{MSE}} + 0.1 \cdot \mathcal{L}_{\text{div}}$。
+总损失：$$\mathcal{L} = \mathcal{L}_{\text{MSE}} + 0.1 \cdot \mathcal{L}_{\text{div}}$$
 
 ### 实现
 
@@ -90,7 +90,7 @@ KNN 超图构建的核心操作是"根据两个节点的特征向量判断它们
 
 $$s_{ij} = \text{MLP}\big([\mathbf{h}_i \| \mathbf{h}_j]\big)$$
 
-得到 $\mathbf{S} \in \mathbb{R}^{N \times N}$ 后，将对角线置 $-\infty$ 以排除自连接。训练时加入 Gumbel 噪声，用 Straight-Through Estimator 实现前向硬选边（0/1 mask）与反向软梯度传播。Good.
+得到 $\mathbf{S} \in \mathbb{R}^{N \times N}$ 后，将对角线置 $-\infty$ 以排除自连接。训练时加入 Gumbel 噪声，用 Straight-Through Estimator 实现前向硬选边（0/1 mask）与反向软梯度传播。
 
 Gumbel-Softmax 的梯度形式为：
 
