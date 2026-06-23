@@ -58,8 +58,11 @@ $$\mathbf{X}^{\text{clustered}} = \mathbf{X}^{\text{enc}} \cdot \mathbf{S} \in \
 
 $$\mathcal{L}_{\text{div}} = \frac{1}{C(C-1)} \sum_{i \neq j} \text{ReLU}\left(\frac{\mathbf{c}_i^\top \mathbf{c}_j}{\|\mathbf{c}_i\| \|\mathbf{c}_j\|}\right)$$
 
-总损失：$$\mathcal{L} = \mathcal{L}_{\text{MSE}} + 0.1 \cdot \mathcal{L}_{\text{div}}$$
+总损失：
 
+$$
+\mathcal{L} = \mathcal{L}_{\text{MSE}} + 0.1 \cdot \mathcal{L}_{\text{div}}
+$$
 ### 实现
 
 `soft_assign` 仅依赖权重矩阵（Embedding 与 cluster_centers），不依赖 STHGNN 的前向计算结果，LLM 与 STHGNN 保持并行。每条聚类曲线拼接一个可学习的聚类身份嵌入（`cluster_identity`），告知 LLM 其所代表的节点类型。
