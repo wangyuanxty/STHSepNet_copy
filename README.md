@@ -77,7 +77,7 @@ LLM_per_node = LLM_out @ soft_assign.T           # (B, P, N)
 
 ### 相关文献
 
-STID (Shao et al., CIKM 2022) 论证了为每个时空节点引入可学习身份嵌入对预测精度的提升作用。聚类身份嵌入沿用了这一思想——与 STID 的逐节点身份不同，此处采用逐聚类身份以适配输入压缩的需求。Token Merging (Bolya et al., ICLR 2023) 指出 Transformer 中软聚类相比硬聚类更稳定，与本文采用 softmax 分配而非离散分组的做法一致。
+STID (Shao et al., CIKM 2022) [https://arxiv.org/abs/2208.10573] 论证了为每个时空节点引入可学习身份嵌入对预测精度的提升作用。聚类身份嵌入沿用了这一思想——与 STID 的逐节点身份不同，此处采用逐聚类身份以适配输入压缩的需求。Token Merging (Bolya et al., ICLR 2023) [https://arxiv.org/abs/2302.01975] 指出 Transformer 中软聚类相比硬聚类更稳定，与本文采用 softmax 分配而非离散分组的做法一致。
 
 ---
 
@@ -119,7 +119,7 @@ else:
 
 ### 相关文献
 
-Gumbel-Softmax (Jang et al., ICLR 2017) 为离散采样的可微重参数化提供了理论依据。GAT (Veličković et al., ICLR 2018) 证明了通过学习得到的注意力权重优于基于固定距离度量的连接——这一结论支持了用可学习评分网络替代欧氏距离 KNN 的设计。
+Gumbel-Softmax (Jang et al., ICLR 2017) [https://arxiv.org/abs/1611.01144] 为离散采样的可微重参数化提供了理论依据。GAT (Veličković et al., ICLR 2018) [https://arxiv.org/abs/1710.10903] 证明了通过学习得到的注意力权重优于基于固定距离度量的连接——这一结论支持了用可学习评分网络替代欧氏距离 KNN 的设计。
 
 ---
 
