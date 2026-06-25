@@ -1,7 +1,7 @@
 # STH-SepNet：开放问题分析与改进
 
 基于 Chen et al., *Decoupling Spatio-Temporal Prediction: When Lightweight Large Models Meet Adaptive Hypergraphs*, KDD 2025.  
-[论文](https://arxiv.org/abs/2505.19620) | [原仓库](https://github.com/jiawenchen10/STHSepNet)
+[原仓库](https://github.com/jiawenchen10/STHSepNet)
 
 STH-SepNet 将时空建模解耦为两个独立模块：轻量 LLM 负责全局时间动态，自适应超图神经网络负责高阶空间交互，最后通过可学习门控融合两者的输出。原论文在五个数据集上取得了 SOTA 结果，同时在 Section 5 的 "Limitations and future work" 中指出了当前设计的两个局限。本文档围绕这两个开放问题展开分析，提出两种端到端的改进方案并给出初步实验结果。
 
@@ -119,7 +119,7 @@ else:
 
 ### 相关文献
 
-Gumbel-Softmax (Jang et al., ICLR 2017) [https://arxiv.org/abs/1611.01144] 为离散采样的可微重参数化提供了理论依据。GAT (Veličković et al., ICLR 2018) [https://arxiv.org/abs/1710.10903] 证明了通过学习得到的注意力权重优于基于固定距离度量的连接——这一结论支持了用可学习评分网络替代欧氏距离 KNN 的设计。
+Gumbel-Softmax (Jang et al., ICLR 2017) [https://arxiv.org/abs/1611.01144] 为离散采样的可微重参数化提供了理论依据。
 
 ---
 
@@ -159,7 +159,7 @@ BIKE-Inflow 数据集，BERT 主干，训练 5 个 epoch：
 | 方案一 Cluster Pooling (C=8) | 5.29 | 13.86 |
 | 方案二 Neural Hypergraph (K=3) | 5.13 | 13.61 |
 
-方案二在 RMSE 上降低了 5.5%（14.40 → 13.61），MAE 也有小幅改善。方案一的 RMSE 降低了 3.8%，但 MAE 略高，可能与超参数 C=8 的选择有关。以上仅训练 5 个 epoch，完整 50 epoch 训练后的结果预期有进一步提升空间。
+方案二在 RMSE 上降低了 5.5%（14.40 → 13.61），MAE 也有小幅改善。方案一的 RMSE 降低了 3.8%，但 MAE 略高，可能与超参数 C=8 的选择有关。由于算力不足以上仅训练 5 个 epoch验证方法有效性。
 
 ---
 
@@ -171,13 +171,6 @@ pip install -r requirements.txt
 
 数据从 [Google Drive](https://drive.google.com/drive/folders/1uhQqAdrIplhhKCHn0McnB-trve6_rATD?usp=drive_link) 下载至 `./dataset/`。预训练模型从 HuggingFace 下载至 `./huggingface/`：
 
-| 模型 | 参数量 | 维度 |
-|------|:---:|:---:|
-| [BERT](https://huggingface.co/google-bert/bert-base-uncased) | 110M | 768 |
-| [GPT-2](https://huggingface.co/openai-community/gpt2) | 124M | 768 |
-| [LLAMA-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) | 1230M | 2048 |
-| [LLAMA-7B](https://huggingface.co/huggyllama/llama-7b) | 6740M | 4096 |
-| [LLAMA-3.1-8B](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) | 8000M | 4096 |
 
 原论文训练脚本位于 `./scripts/`，Windows 使用对应 `.bat` 文件。
 
